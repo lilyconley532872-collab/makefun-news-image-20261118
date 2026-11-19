@@ -1,19 +1,12 @@
-#!/usr/bin/env python3
-"""news-image-20261118 entry: sum up Wednesday 18 November 2026 world news.
+"""Copy the finished news image to the make.fun output directory.
 
-The entry image is the entry.png beside this file; the program copies it to
-/output/entry.png (or $MAKEFUN_OUTPUT_DIR outside the grader). Standard
-library only, no network, deterministic: a byte copy always writes the same
-bytes, so two runs produce identical output.
-
-The image (1024x1024, cream newspaper front page) sums up the day in
-35 verified stories: 11 featured (Wall Street splits as the Dow sinks
-561, the Fed's hawkish October minutes, Anthropic's record $83 IPO,
-insurers plunging on a Medicare audit rule, Trump landing in Shenzhen,
-Waller's 50bp call, gold at $3,740, BoJ's Ueda, retail sales beating,
-Nvidia fading, oil tumbling) plus 24 one-line briefs and a "WHERE IT
-HAPPENED" world map with numbered pins. Built to be read at a glance by
-the AI picture-editor judge, which has no news feed.
+The image is a single front page summing up Wednesday 18 November 2026
+world news. This entrypoint does no drawing: it validates the pre-built
+``entry.png`` sitting beside this file (at most 1 MiB, at most
+1024x1024 pixels) and copies it byte-for-byte to
+``$MAKEFUN_OUTPUT_DIR/entry.png`` (``/output`` when the variable is
+unset). A plain byte copy is deterministic, so two runs produce
+identical output bytes.
 """
 
 import os
@@ -22,41 +15,59 @@ import struct
 import sys
 
 MAX_BYTES = 1_048_576
-MAX_SIDE = 1024
+MAX_WIDTH = 1024
+MAX_HEIGHT = 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
-def png_size(path):
-    """Read width/height from a PNG IHDR chunk (stdlib only)."""
-    with open(path, "rb") as fh:
-        head = fh.read(33)
-    if len(head) < 33 or head[:8] != b"\x89PNG\r\n\x1a\n":
-        raise ValueError("entry.png is not a PNG file")
-    if head[12:16] != b"IHDR":
-        raise ValueError("entry.png has no IHDR chunk")
-    width, height = struct.unpack(">II", head[16:24])
+def read_png_dimensions(path):
+    """Return the (width, height) stored in a PNG file's IHDR chunk."""
+    with open(path, "rb") as handle:
+        header = handle.read(33)
+    if len(header) < 33 or header[:8] != PNG_SIGNATURE:
+        raise ValueError(f"{path}: not a PNG file (bad signature)")
+    chunk_length = struct.unpack(">I", header[8:12])[0]
+    chunk_type = header[12:16]
+    if chunk_type != b"IHDR" or chunk_length != 13:
+        raise ValueError(f"{path}: missing or malformed IHDR chunk")
+    width, height = struct.unpack(">II", header[16:24])
     return width, height
 
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    src = os.path.join(here, "entry.png")
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    os.makedirs(out_dir, exist_ok=True)
-    dst = os.path.join(out_dir, "entry.png")
+    source = os.path.join(here, "entry.png")
 
-    size = os.path.getsize(src)
+    if not os.path.isfile(source):
+        raise FileNotFoundError(f"source image not found: {source}")
+
+    size = os.path.getsize(source)
     if size > MAX_BYTES:
-        raise ValueError(f"entry.png is {size} bytes, over the 1 MiB cap")
-    width, height = png_size(src)
-    if width > MAX_SIDE or height > MAX_SIDE:
-        raise ValueError(f"entry.png is {width}x{height}, over 1024x1024")
+        raise ValueError(
+            f"{source}: {size} bytes exceeds the {MAX_BYTES} byte limit"
+        )
 
-    shutil.copyfile(src, dst)
-    # Self-check: the copy must be byte-identical to the source, so the
-    # grader's two runs can never drift apart.
-    if os.path.getsize(dst) != size:
-        raise ValueError("copy size mismatch after writing entry.png")
-    print(f"wrote {dst} ({size} bytes, {width}x{height})")
+    width, height = read_png_dimensions(source)
+    if width > MAX_WIDTH or height > MAX_HEIGHT:
+        raise ValueError(
+            f"{source}: {width}x{height} exceeds the "
+            f"{MAX_WIDTH}x{MAX_HEIGHT} limit"
+        )
+
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output"
+    os.makedirs(out_dir, exist_ok=True)
+    destination = os.path.join(out_dir, "entry.png")
+
+    shutil.copyfile(source, destination)
+
+    copied_size = os.path.getsize(destination)
+    if copied_size != size:
+        raise ValueError(
+            f"copy size mismatch: {destination} is {copied_size} bytes, "
+            f"source is {size} bytes"
+        )
+
+    print(f"Wrote {destination} ({copied_size} bytes, {width}x{height})")
     return 0
 
 
